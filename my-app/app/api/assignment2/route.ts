@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import sql from 'mssql/msnodesqlv8';
+import sql from 'mssql';
 import { getConnection } from '@/lib/db';
 
 // =====================================================
@@ -9,7 +9,6 @@ import { getConnection } from '@/lib/db';
 export async function GET() {
   try {
     const pool = await getConnection();
-
     const result = await pool.request().query(`
       SELECT
         a.assignment_id,

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import sql from 'mssql/msnodesqlv8';
+import sql from 'mssql';
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'crypto';
 
