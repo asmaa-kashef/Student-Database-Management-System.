@@ -1,49 +1,16 @@
 
-import sql from 'mssql/msnodesqlv8';
+import mariadb, { type PoolConnection } from 'mariadb';
 
-const config: sql.config = {
-  server: 'localhost\\SQLEXPRESS',
-  database: 'aimap_db',
-  driver: 'ODBC Driver 18 for SQL Server',
-  options: {
-    trustedConnection: true,
-    trustServerCertificate: true,
-    encrypt: false,
-  },
-  connectionTimeout: 30000,
-};
+const pool = mariadb.createPool({
+  host: process.env.DB_SERVER || 'localhost',
+  port: Number(process.env.DB_PORT || 3306),
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '',
+  database: process.env.DB_DATABASE || 'aimap_mariadb_import',
+  connectionLimit: 5,
+  acquireTimeout: 30000,
+});
 
-let pool: sql.ConnectionPool | null = null;
-let poolPromise: Promise<sql.ConnectionPool> | null = null;
-
-export async function getConnection(): Promise<sql.ConnectionPool> {
-  if (pool?.connected) {
-    return pool;
-  }
-
-  if (!poolPromise) {
-    console.log(
-      'Connecting to SQL Server using Windows Authentication...'
-    );
-
-    poolPromise = new sql.ConnectionPool(config)
-      .connect()
-      .then((connectedPool) => {
-        pool = connectedPool;
-
-        console.log('Connected to aimap_db successfully!');
-
-        return connectedPool;
-      })
-      .catch((error: unknown) => {
-        pool = null;
-        poolPromise = null;
-
-        console.error('Database connection failed:', error);
-
-        throw error;
-      });
-  }
-
-  return poolPromise;
+export async function getConnection(): Promise<PoolConnection> {
+  return pool.getConnection();
 }

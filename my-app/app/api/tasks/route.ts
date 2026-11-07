@@ -1,112 +1,419 @@
+
 import { NextRequest, NextResponse } from 'next/server';
-import sql from 'mssql/msnodesqlv8';
+import { getConnection } from '@/lib/db';
 
-const config: sql.config = {
-  server: 'localhost\\SQLEXPRESS',
-  database: 'aimap_db',
-  driver: 'ODBC Driver 18 for SQL Server',
-  options: {
-    trustedConnection: true,
-    trustServerCertificate: true,
-    encrypt: false,
-  },
-};
+const validTaskTypes = ['PERSONAL', 'PROJECT'] as const;
+const validPriorities = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const;
+const validStatuses = [
+  'BLOCKED',
+  'COMPLETED',
+  'IN_PROGRESS',
+  'PENDING',
+] as const;
 
+function isPositiveInteger(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value > 0
+  );
+}
+
+function isValidDate(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return false;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+// GET: Fetch all tasks
 export async function GET() {
-  let pool: sql.ConnectionPool | null = null;
+  let connection;
+
   try {
-    pool = await new sql.ConnectionPool(config).connect();
-    const result = await pool.request().query(`
-      SELECT task_id, task_type, title, due_date, priority, status, student_id, project_id, category, estimated_hours, created_at
-      FROM dbo.academic_task;
+    connection = await getConnection();
+
+    const tasks = await connection.query(`
+      SELECT
+        task_id,
+        task_type,
+        title,
+        due_date,
+        priority,
+        status,
+        student_id,
+        project_id,
+        category,
+        reminder_time,
+        milestone_id,
+        assigned_student_id,
+        estimated_hours,
+        created_at
+      FROM academic_task
+      ORDER BY due_date ASC, task_id DESC
     `);
 
-    return NextResponse.json({ tasks: result.recordset }, { status: 200 });
+    return NextResponse.json(
+      { tasks },
+      { status: 200 }
+    );
+
   } catch (error: unknown) {
     console.error('FETCH TASKS ERROR:', error);
+
     return NextResponse.json(
-      { error: 'Failed to fetch tasks.', details: error instanceof Error ? error.message : 'Unknown error' },
+      { error: 'Failed to fetch tasks.' },
       { status: 500 }
     );
+
   } finally {
-    if (pool) await pool.close();
+    if (connection) connection.release();
   }
 }
 
+// POST: Create a new task
 export async function POST(request: NextRequest) {
-  let pool: sql.ConnectionPool | null = null;
+  let connection;
+
   try {
-    let body: any;
+    let body: unknown;
+
     try {
       body = await request.json();
     } catch {
-      return NextResponse.json({ error: 'Invalid JSON request body.' }, { status: 400 });
-    }
-
-    const { task_type, title, due_date, priority, status, student_id, project_id, category, estimated_hours } = body ?? {};
-
-    if (!title || !task_type) {
       return NextResponse.json(
-        { error: 'title and task_type are required fields.' },
+        { error: 'Invalid JSON request body.' },
         { status: 400 }
       );
     }
 
-    // معالجة الـ IDs لتكون null إذا كانت فارغة أو غير صفرية لتجنب أخطاء المفاتيح الأجنبية
-    const parsedStudentId = student_id && !isNaN(Number(student_id)) && Number(student_id) > 0 ? Number(student_id) : null;
-    const parsedProjectId = project_id && !isNaN(Number(project_id)) && Number(project_id) > 0 ? Number(project_id) : null;
+    if (
+      typeof body !== 'object' ||
+      body === null ||
+      Array.isArray(body)
+    ) {
+      return NextResponse.json(
+        { error: 'Invalid request body.' },
+        { status: 400 }
+      );
+    }
 
-    pool = await new sql.ConnectionPool(config).connect();
+    const {
+      task_type,
+      title,
+      due_date,
+      priority,
+      status,
+      student_id,
+      project_id,
+      category,
+      estimated_hours,
+      reminder_time,
+      milestone_id,
+      assigned_student_id,
+    } = body as Record<string, unknown>;
 
-    const result = await pool.request()
-      .input('taskType', sql.VarChar(50), String(task_type).trim())
-      .input('title', sql.VarChar(200), String(title).trim())
-      .input('dueDate', sql.Date, due_date ? new Date(due_date) : null)
-      .input('priority', sql.VarChar(20), priority ? String(priority).trim() : 'Medium')
-      .input('status', sql.VarChar(20), status ? String(status).trim() : 'Pending')
-      .input('studentId', sql.Int, parsedStudentId)
-      .input('projectId', sql.Int, parsedProjectId)
-      .input('category', sql.VarChar(50), category ? String(category).trim() : null)
-      .input('estimatedHours', sql.Decimal(5, 2), estimated_hours ? Number(estimated_hours) : null)
-      .query(`
-        INSERT INTO dbo.academic_task (
-          task_type,
-          title,
-          due_date,
-          priority,
-          status,
-          student_id,
-          project_id,
-          category,
-          estimated_hours,
-          created_at
-        )
-        OUTPUT INSERTED.task_id
-        VALUES (
-          @taskType,
-          @title,
-          @dueDate,
-          @priority,
-          @status,
-          @studentId,
-          @projectId,
-          @category,
-          @estimatedHours,
-          GETDATE()
+    // Validate required fields
+    if (
+      typeof task_type !== 'string' ||
+      !validTaskTypes.includes(
+        task_type as (typeof validTaskTypes)[number]
+      ) ||
+      typeof title !== 'string' ||
+      !title.trim() ||
+      title.trim().length > 150 ||
+      !isValidDate(due_date)
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'A valid task type, title (maximum 150 characters), and due date are required.',
+        },
+        { status: 400 }
+      );
+    }
+
+    // Validate priority and status
+    const normalizedPriority =
+      priority == null ? 'MEDIUM' : priority;
+
+    const normalizedStatus =
+      status == null ? 'PENDING' : status;
+
+    if (
+      typeof normalizedPriority !== 'string' ||
+      !validPriorities.includes(
+        normalizedPriority as (typeof validPriorities)[number]
+      )
+    ) {
+      return NextResponse.json(
+        { error: 'Invalid task priority.' },
+        { status: 400 }
+      );
+    }
+
+    if (
+      typeof normalizedStatus !== 'string' ||
+      !validStatuses.includes(
+        normalizedStatus as (typeof validStatuses)[number]
+      )
+    ) {
+      return NextResponse.json(
+        { error: 'Invalid task status.' },
+        { status: 400 }
+      );
+    }
+
+    // Validate task type and its required relationship
+    if (task_type === 'PERSONAL') {
+      if (
+        !isPositiveInteger(student_id) ||
+        project_id != null
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              'A personal task requires a valid student ID and must not have a project ID.',
+          },
+          { status: 400 }
         );
-      `);
+      }
+    }
+
+    if (task_type === 'PROJECT') {
+      if (
+        !isPositiveInteger(project_id) ||
+        student_id != null
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              'A project task requires a valid project ID and must not have a personal student ID.',
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Validate optional IDs
+    if (
+      student_id != null &&
+      !isPositiveInteger(student_id)
+    ) {
+      return NextResponse.json(
+        { error: 'Invalid student ID.' },
+        { status: 400 }
+      );
+    }
+
+    if (
+      project_id != null &&
+      !isPositiveInteger(project_id)
+    ) {
+      return NextResponse.json(
+        { error: 'Invalid project ID.' },
+        { status: 400 }
+      );
+    }
+
+    if (
+      milestone_id != null &&
+      !isPositiveInteger(milestone_id)
+    ) {
+      return NextResponse.json(
+        { error: 'Invalid milestone ID.' },
+        { status: 400 }
+      );
+    }
+
+    if (
+      assigned_student_id != null &&
+      !isPositiveInteger(assigned_student_id)
+    ) {
+      return NextResponse.json(
+        { error: 'Invalid assigned student ID.' },
+        { status: 400 }
+      );
+    }
+
+    // Validate optional category
+    if (
+      category != null &&
+      (
+        typeof category !== 'string' ||
+        category.trim().length === 0 ||
+        category.trim().length > 50
+      )
+    ) {
+      return NextResponse.json(
+        { error: 'Invalid task category.' },
+        { status: 400 }
+      );
+    }
+
+    // Validate estimated hours: DECIMAL(4,1)
+    let estimatedHours: number | null = null;
+
+    if (estimated_hours != null) {
+      if (
+        typeof estimated_hours !== 'number' ||
+        !Number.isFinite(estimated_hours) ||
+        estimated_hours < 0 ||
+        estimated_hours > 999.9 ||
+        Math.round(estimated_hours * 10) !==
+          estimated_hours * 10
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              'Estimated hours must be a number between 0 and 999.9 with at most one decimal place.',
+          },
+          { status: 400 }
+        );
+      }
+
+      estimatedHours = estimated_hours;
+    }
+
+    // Validate optional reminder date
+    if (
+      reminder_time != null &&
+      (
+        typeof reminder_time !== 'string' ||
+        Number.isNaN(Date.parse(reminder_time))
+      )
+    ) {
+      return NextResponse.json(
+        { error: 'Invalid reminder date and time.' },
+        { status: 400 }
+      );
+    }
+
+    connection = await getConnection();
+
+    // Verify referenced records exist
+    if (student_id != null) {
+      const students = await connection.query(
+        'SELECT student_id FROM student WHERE student_id = ?',
+        [student_id]
+      );
+
+      if (students.length === 0) {
+        return NextResponse.json(
+          { error: 'The selected student does not exist.' },
+          { status: 404 }
+        );
+      }
+    }
+
+    if (project_id != null) {
+      const projects = await connection.query(
+        'SELECT project_id FROM course_project WHERE project_id = ?',
+        [project_id]
+      );
+
+      if (projects.length === 0) {
+        return NextResponse.json(
+          { error: 'The selected project does not exist.' },
+          { status: 404 }
+        );
+      }
+    }
+
+    if (milestone_id != null) {
+      const milestones = await connection.query(
+        'SELECT milestone_id FROM project_milestone WHERE milestone_id = ?',
+        [milestone_id]
+      );
+
+      if (milestones.length === 0) {
+        return NextResponse.json(
+          { error: 'The selected milestone does not exist.' },
+          { status: 404 }
+        );
+      }
+    }
+
+    if (assigned_student_id != null) {
+      const assignedStudents = await connection.query(
+        'SELECT student_id FROM student WHERE student_id = ?',
+        [assigned_student_id]
+      );
+
+      if (assignedStudents.length === 0) {
+        return NextResponse.json(
+          { error: 'The assigned student does not exist.' },
+          { status: 404 }
+        );
+      }
+    }
+
+    // Insert task using parameterized query
+    const result = await connection.query(
+      `
+      INSERT INTO academic_task (
+        task_type,
+        title,
+        due_date,
+        priority,
+        status,
+        student_id,
+        project_id,
+        category,
+        estimated_hours,
+        reminder_time,
+        milestone_id,
+        assigned_student_id,
+        created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      `,
+      [
+        task_type,
+        title.trim(),
+        due_date,
+        normalizedPriority,
+        normalizedStatus,
+        student_id ?? null,
+        project_id ?? null,
+        category == null ? null : category.trim(),
+        estimatedHours,
+        reminder_time ?? null,
+        milestone_id ?? null,
+        assigned_student_id ?? null,
+      ]
+    );
 
     return NextResponse.json(
-      { success: true, task_id: result.recordset[0]?.task_id, message: 'Task created successfully.' },
+      {
+        success: true,
+        task_id: Number(result.insertId),
+        message: 'Task created successfully.',
+      },
       { status: 201 }
     );
+
   } catch (error: unknown) {
     console.error('CREATE TASK ERROR:', error);
+
     return NextResponse.json(
-      { error: 'Failed to create task.', details: error instanceof Error ? error.message : 'Unknown error' },
+      { error: 'Failed to create task.' },
       { status: 500 }
     );
+
   } finally {
-    if (pool) await pool.close();
+    if (connection) connection.release();
   }
 }

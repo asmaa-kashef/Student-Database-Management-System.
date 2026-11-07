@@ -1,50 +1,199 @@
+﻿
+'use client';
+
+import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 
 export default function MaintenancePage() {
+  const router = useRouter();
+
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleSubmit(
+    e: React.FormEvent<HTMLFormElement>
+  ) {
+    e.preventDefault();
+
+    if (loading) return;
+
+    setError('');
+    setLoading(true);
+
+    try {
+      const response = await fetch('/api/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'same-origin',
+        cache: 'no-store',
+        body: JSON.stringify({
+          username: username.trim(),
+          password,
+        }),
+      });
+
+      let data: { error?: string; redirectTo?: string };
+
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error('Invalid server response. Please try again.');
+      }
+
+      if (!response.ok) {
+        setError(data.error || 'Login failed. Please try again.');
+        return;
+      }
+
+      setPassword('');
+
+      const redirectTo =
+        data.redirectTo === '/maintenance/dashboard'
+          ? data.redirectTo
+          : '/maintenance/dashboard';
+
+      router.replace(redirectTo);
+      router.refresh();
+
+    } catch (err) {
+      console.error('LOGIN REQUEST ERROR:', err);
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to connect to the server. Please try again.'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
-    <div className="min-h-screen bg-[#0b0f17] text-slate-200 p-8">
-      <div className="max-w-4xl mx-auto space-y-6">
-        
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-[#212d40] pb-4">
-          <div>
-            <h1 className="text-xl font-bold text-white">Database Maintenance Panel</h1>
-            <p className="text-xs text-slate-400 mt-1">Central management hub for inserting entities and relationships[cite: 1].</p>
-          </div>
-          <Link href="/" className="px-3 py-1.5 bg-[#161e2e] border border-[#212d40] rounded-lg text-xs text-sky-400 hover:bg-[#1e293b]">
-            &larr; Back to Dashboard
+    <main className="min-h-screen bg-[#0b0f17] text-slate-200 flex items-center justify-center p-6">
+      <div className="w-full max-w-md">
+
+        <div className="mb-6">
+          <Link
+            href="/"
+            className="text-xs text-slate-400 hover:text-sky-400 transition"
+          >
+            â† Back to Main Dashboard
           </Link>
         </div>
 
-        {/* Entities & Relationships Links Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          
-          {/* Entities Section */}
-          <div className="bg-[#111723] border border-[#212d40] rounded-xl p-5 space-y-3">
-            <h2 className="text-sm font-bold text-sky-400 uppercase tracking-wider">Entity Input Forms (6 Required)</h2>
-            <ul className="space-y-2 text-xs">
-              <li><Link href="/maintenance/student" className="block p-2 bg-[#161e2e] hover:bg-[#1e293b] rounded border border-[#212d40] text-slate-200">1. Add New Student Form</Link></li>
-              <li><Link href="/maintenance/course" className="block p-2 bg-[#161e2e] hover:bg-[#1e293b] rounded border border-[#212d40] text-slate-200">2. Add New Course Form</Link></li>
-              <li><Link href="/maintenance/assignment" className="block p-2 bg-[#161e2e] hover:bg-[#1e293b] rounded border border-[#212d40] text-slate-200">3. Add New Assignment Form</Link></li>
-              <li><Link href="/maintenance/task" className="block p-2 bg-[#161e2e] hover:bg-[#1e293b] rounded border border-[#212d40] text-slate-200">4. Add New Task Form</Link></li>
-              <li><Link href="/maintenance/schedule" className="block p-2 bg-[#161e2e] hover:bg-[#1e293b] rounded border border-[#212d40] text-slate-200">5. Add New Class Schedule Form</Link></li>
-              <li><Link href="/maintenance/project" className="block p-2 bg-[#161e2e] hover:bg-[#1e293b] rounded border border-[#212d40] text-slate-200">6. Add New Project Form</Link></li>
-            </ul>
+        <div className="bg-[#111723] border border-[#212d40] rounded-2xl p-8 shadow-xl">
+
+          <div className="text-center mb-8">
+            <div className="w-14 h-14 mx-auto mb-4 rounded-xl bg-[#172b43] border border-[#254568] flex items-center justify-center">
+              <svg
+                className="w-7 h-7 text-sky-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="1.7"
+                  d="M12 15v2m-6 4h12a2 2 0 002-2v-7a2 2 0 00-2-2H6a2 2 0 00-2 2v7a2 2 0 002 2zm10-11V7a4 4 0 00-8 0v3h8z"
+                />
+              </svg>
+            </div>
+
+            <h1 className="text-2xl font-bold text-white">
+              Administrator Login
+            </h1>
+
+            <p className="text-sm text-slate-400 mt-2">
+              Sign in to access the Database Maintenance Panel
+            </p>
           </div>
 
-          {/* Relationships Section */}
-          <div className="bg-[#111723] border border-[#212d40] rounded-xl p-5 space-y-3">
-            <h2 className="text-sm font-bold text-emerald-400 uppercase tracking-wider">Relationship Input Forms (3 Required)</h2>
-            <ul className="space-y-2 text-xs">
-              <li><Link href="/maintenance/enrollment" className="block p-2 bg-[#161e2e] hover:bg-[#1e293b] rounded border border-[#212d40] text-slate-200">1. Enrollment (Student & Course)</Link></li>
-              <li><Link href="/maintenance/submission" className="block p-2 bg-[#161e2e] hover:bg-[#1e293b] rounded border border-[#212d40] text-slate-200">2. Submission (Student & Assignment)</Link></li>
-              <li><Link href="/maintenance/task-course" className="block p-2 bg-[#161e2e] hover:bg-[#1e293b] rounded border border-[#212d40] text-slate-200">3. Task Assignment (Task & Course)</Link></li>
-            </ul>
+          <form onSubmit={handleSubmit} className="space-y-5">
+
+            <div>
+              <label
+                htmlFor="username"
+                className="block text-xs font-medium text-slate-300 mb-2"
+              >
+                Username
+              </label>
+
+              <input
+                id="username"
+                name="username"
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Enter administrator username"
+                autoComplete="username"
+                required
+                disabled={loading}
+                className="w-full bg-[#0b0f17] border border-[#29364b] rounded-lg px-4 py-3 text-sm text-white placeholder-slate-600 outline-none focus:border-sky-500 transition disabled:opacity-50"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="password"
+                className="block text-xs font-medium text-slate-300 mb-2"
+              >
+                Password
+              </label>
+
+              <input
+                id="password"
+                name="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter your password"
+                autoComplete="current-password"
+                required
+                disabled={loading}
+                className="w-full bg-[#0b0f17] border border-[#29364b] rounded-lg px-4 py-3 text-sm text-white placeholder-slate-600 outline-none focus:border-sky-500 transition disabled:opacity-50"
+              />
+            </div>
+
+            {error && (
+              <div
+                role="alert"
+                className="bg-red-950/40 border border-red-800/60 rounded-lg px-4 py-3 text-sm text-red-300"
+              >
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading || !username.trim() || !password}
+              className="w-full bg-sky-600 hover:bg-sky-500 disabled:bg-sky-800 disabled:cursor-not-allowed text-white font-semibold text-sm py-3 rounded-lg transition shadow-lg shadow-sky-950/30"
+            >
+              {loading ? 'Signing In...' : 'Sign In'}
+            </button>
+
+          </form>
+
+          <div className="mt-7 pt-5 border-t border-[#212d40] text-center">
+            <p className="text-xs text-slate-500">
+              Restricted access Â· Authorized administrators only
+            </p>
           </div>
 
         </div>
 
+        <p className="text-center text-xs text-slate-600 mt-6">
+          Database Management System
+        </p>
+
       </div>
-    </div>
+    </main>
   );
 }
+

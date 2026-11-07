@@ -1,14 +1,13 @@
+
 'use client';
 
 import { useState } from 'react';
 import Link from 'next/link';
 
 export default function StudentFormPage() {
-  // Academic User fields
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
 
-  // Student table fields
   const [matriculationNumber, setMatriculationNumber] = useState('');
   const [major, setMajor] = useState(
     'Computer Science & Data Engineering'
@@ -16,19 +15,58 @@ export default function StudentFormPage() {
   const [currentSemester, setCurrentSemester] = useState('1');
   const [gpa, setGpa] = useState('');
 
-  // Form status
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
+  const [gpaError, setGpaError] = useState('');
+
+  const handleGpaChange = (value: string) => {
+    setGpa(value);
+    setGpaError('');
+
+    if (value === '') return;
+
+    const numericGpa = Number(value);
+
+    if (!Number.isFinite(numericGpa)) {
+      setGpaError('GPA must be a valid number.');
+    } else if (numericGpa < 0 || numericGpa > 4) {
+      setGpaError('GPA must be between 0 and 4.');
+    }
+  };
 
   const handleSubmit = async (
     e: React.FormEvent<HTMLFormElement>
   ) => {
     e.preventDefault();
 
-    setLoading(true);
     setSubmitted(false);
     setError('');
+    setGpaError('');
+
+    const numericGpa = Number(gpa);
+    const numericSemester = Number(currentSemester);
+
+    if (
+      gpa.trim() === '' ||
+      !Number.isFinite(numericGpa) ||
+      numericGpa < 0 ||
+      numericGpa > 4
+    ) {
+      setGpaError('GPA must be between 0 and 4.');
+      return;
+    }
+
+    if (
+      !Number.isInteger(numericSemester) ||
+      numericSemester < 1 ||
+      numericSemester > 12
+    ) {
+      setError('Current semester must be between 1 and 12.');
+      return;
+    }
+
+    setLoading(true);
 
     try {
       const response = await fetch('/api/students', {
@@ -36,17 +74,24 @@ export default function StudentFormPage() {
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'same-origin',
         body: JSON.stringify({
           fullName: fullName.trim(),
           email: email.trim(),
           matriculation_number: matriculationNumber.trim(),
           major: major.trim(),
-          current_semester: Number(currentSemester),
-          gpa: Number(gpa),
+          current_semester: numericSemester,
+          gpa: numericGpa,
         }),
       });
 
       const result = await response.json();
+
+      if (response.status === 401 || response.status === 403) {
+        throw new Error(
+          'Your administrator session is invalid or expired. Please sign in again.'
+        );
+      }
 
       if (!response.ok) {
         throw new Error(
@@ -56,7 +101,6 @@ export default function StudentFormPage() {
 
       setSubmitted(true);
 
-      // Reset the form after successful saving
       setFullName('');
       setEmail('');
       setMatriculationNumber('');
@@ -84,21 +128,19 @@ export default function StudentFormPage() {
     <div className="min-h-screen bg-[#0b0f17] text-slate-200 p-6 md:p-12">
       <div className="max-w-xl mx-auto space-y-6">
 
-        {/* Header */}
         <div className="flex items-center justify-between border-b border-[#212d40] pb-4 gap-4">
           <h1 className="text-xl font-bold text-white">
             Add New Student
           </h1>
 
           <Link
-            href="/maintenance"
+            href="/maintenance/dashboard"
             className="px-3 py-1.5 bg-[#161e2e] border border-[#212d40] rounded-lg text-xs text-sky-400 hover:bg-[#1e293b] whitespace-nowrap"
           >
-            &larr; Back to Maintenance
+            &larr; Back to Dashboard
           </Link>
         </div>
 
-        {/* Success Message */}
         {submitted && (
           <div
             role="status"
@@ -113,7 +155,6 @@ export default function StudentFormPage() {
           </div>
         )}
 
-        {/* Error Message */}
         {error && (
           <div
             role="alert"
@@ -124,20 +165,15 @@ export default function StudentFormPage() {
           </div>
         )}
 
-        {/* Student Form */}
         <form
           onSubmit={handleSubmit}
           className="bg-[#111723] border border-[#212d40] rounded-xl p-6 space-y-4"
         >
           {/* Full Name */}
           <div>
-            <label
-              htmlFor="fullName"
-              className={labelClass}
-            >
+            <label htmlFor="fullName" className={labelClass}>
               Full Name
             </label>
-
             <input
               id="fullName"
               type="text"
@@ -152,13 +188,9 @@ export default function StudentFormPage() {
 
           {/* University Email */}
           <div>
-            <label
-              htmlFor="email"
-              className={labelClass}
-            >
+            <label htmlFor="email" className={labelClass}>
               University Email
             </label>
-
             <input
               id="email"
               type="email"
@@ -171,7 +203,7 @@ export default function StudentFormPage() {
             />
           </div>
 
-          {/* matriculation_number */}
+          {/* Matriculation Number */}
           <div>
             <label
               htmlFor="matriculationNumber"
@@ -179,7 +211,6 @@ export default function StudentFormPage() {
             >
               Matriculation Number
             </label>
-
             <input
               id="matriculationNumber"
               type="text"
@@ -193,15 +224,11 @@ export default function StudentFormPage() {
             />
           </div>
 
-          {/* major */}
+          {/* Major */}
           <div>
-            <label
-              htmlFor="major"
-              className={labelClass}
-            >
+            <label htmlFor="major" className={labelClass}>
               Major
             </label>
-
             <input
               id="major"
               type="text"
@@ -213,7 +240,7 @@ export default function StudentFormPage() {
             />
           </div>
 
-          {/* current_semester */}
+          {/* Current Semester */}
           <div>
             <label
               htmlFor="currentSemester"
@@ -221,7 +248,6 @@ export default function StudentFormPage() {
             >
               Current Semester (1-12)
             </label>
-
             <input
               id="currentSemester"
               type="number"
@@ -237,15 +263,11 @@ export default function StudentFormPage() {
             />
           </div>
 
-          {/* gpa */}
+          {/* GPA */}
           <div>
-            <label
-              htmlFor="gpa"
-              className={labelClass}
-            >
+            <label htmlFor="gpa" className={labelClass}>
               GPA
             </label>
-
             <input
               id="gpa"
               type="number"
@@ -254,16 +276,33 @@ export default function StudentFormPage() {
               step="0.01"
               required
               value={gpa}
-              onChange={(e) => setGpa(e.target.value)}
-              placeholder="e.g. 3.75"
-              className={inputClass}
+              onChange={(e) => handleGpaChange(e.target.value)}
+              placeholder="Enter GPA (0 - 4)"
+              aria-invalid={Boolean(gpaError)}
+              aria-describedby="gpa-help gpa-error"
+              className={`${inputClass} ${
+                gpaError ? 'border-red-500' : ''
+              }`}
             />
+
+            <p id="gpa-help" className="text-slate-500 text-xs mt-1">
+              Allowed GPA range: 0 to 4.
+            </p>
+
+            {gpaError && (
+              <p
+                id="gpa-error"
+                role="alert"
+                className="text-red-400 text-xs mt-1"
+              >
+                {gpaError}
+              </p>
+            )}
           </div>
 
-          {/* Submit Button */}
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || Boolean(gpaError)}
             className="w-full bg-sky-500 hover:bg-sky-600 disabled:bg-slate-600 disabled:cursor-not-allowed text-white py-2.5 rounded-lg text-xs font-semibold transition-all mt-4"
           >
             {loading ? 'Saving Student...' : 'Save Student Record'}

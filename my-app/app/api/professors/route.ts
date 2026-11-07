@@ -1,36 +1,39 @@
-import { NextResponse } from 'next/server';
-import sql from 'mssql/msnodesqlv8';
 
-const config: sql.config = {
-  server: 'localhost\\SQLEXPRESS',
-  database: 'aimap_db',
-  driver: 'ODBC Driver 18 for SQL Server',
-  options: {
-    trustedConnection: true,
-    trustServerCertificate: true,
-    encrypt: false,
-  },
-};
+import { NextResponse } from 'next/server';
+import { getConnection } from '@/lib/db';
 
 export async function GET() {
-  let pool: sql.ConnectionPool | null = null;
+  let connection;
+
   try {
-    pool = await new sql.ConnectionPool(config).connect();
-    
-    // استعلام يربط جدول الأساتذة بجدول المستخدمين لجلب الـ ID والاسم الحقيقي
-    const result = await pool.request().query(`
-      SELECT 
-        p.professor_id, 
-        u.full_name 
-      FROM dbo.professor p
-      JOIN dbo.academic_user u ON p.professor_id = u.user_id
+    connection = await getConnection();
+
+    const professors = await connection.query(`
+      SELECT
+        p.professor_id,
+        u.full_name
+      FROM professor p
+      INNER JOIN academic_user u
+        ON p.professor_id = u.user_id
+      ORDER BY u.full_name ASC
     `);
 
-    return NextResponse.json({ professors: result.recordset }, { status: 200 });
-  } catch (error) {
+    return NextResponse.json(
+      { professors },
+      { status: 200 }
+    );
+
+  } catch (error: unknown) {
     console.error('FETCH PROFESSORS ERROR:', error);
-    return NextResponse.json({ professors: [], error: 'Failed to fetch professors' }, { status: 500 });
+
+    return NextResponse.json(
+      { error: 'Failed to fetch professors.' },
+      { status: 500 }
+    );
+
   } finally {
-    if (pool) await pool.close();
+    if (connection) {
+      connection.release();
+    }
   }
 }

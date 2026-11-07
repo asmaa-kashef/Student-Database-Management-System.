@@ -1,55 +1,95 @@
+
 import { NextRequest, NextResponse } from 'next/server';
-import sql from 'mssql/msnodesqlv8';
+import { getConnection } from '@/lib/db';
+import { getAdminSession } from '@/lib/admin-session';
 import bcrypt from 'bcryptjs';
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 
-const config: sql.config = {
-  server: 'localhost\\SQLEXPRESS',
-  database: 'aimap_db',
-  driver: 'ODBC Driver 18 for SQL Server',
-  options: {
-    trustedConnection: true,
-    trustServerCertificate: true,
-    encrypt: false,
-  },
-};
 
+// GET: Fetch students
 export async function GET() {
-  let pool: sql.ConnectionPool | null = null;
+  let connection;
+
   try {
-    pool = await new sql.ConnectionPool(config).connect();
-    
-    // جلب الطلاب مع استعلام آمن ومباشر لتجنب أخطاء 500
-    const result = await pool.request().query(`
-      SELECT student_id, matriculation_number AS full_name 
-      FROM dbo.student;
+    // 1. Verify administrator session
+    const admin = await getAdminSession();
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: 'Unauthorized. Administrator login is required.' },
+        { status: 401 }
+      );
+    }
+
+    // 2. Connect to database
+    connection = await getConnection();
+
+    // 3. Fetch students
+    const students = await connection.query(`
+      SELECT
+        s.student_id,
+        u.full_name
+      FROM student s
+      INNER JOIN academic_user u
+        ON s.student_id = u.user_id
+      ORDER BY u.full_name ASC
     `);
 
-    return NextResponse.json({ students: result.recordset }, { status: 200 });
+    return NextResponse.json(
+      { students },
+      { status: 200 }
+    );
+
   } catch (error: unknown) {
     console.error('FETCH STUDENTS ERROR:', error);
+
     return NextResponse.json(
-      { error: 'Failed to fetch students.', details: error instanceof Error ? error.message : 'Unknown error' },
+      { error: 'Failed to fetch students.' },
       { status: 500 }
     );
+
   } finally {
-    if (pool) await pool.close();
+    if (connection) {
+      connection.release();
+    }
   }
 }
 
+// POST: Create a student account
 export async function POST(request: NextRequest) {
-  let pool: sql.ConnectionPool | null = null;
-  let transaction: sql.Transaction | null = null;
+  let connection;
+  let transactionStarted = false;
 
   try {
-    // 1. Validate JSON
-    let body: any;
+    // 1. Verify administrator session
+    const admin = await getAdminSession();
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: 'Unauthorized. Please sign in as administrator.' },
+        { status: 401 }
+      );
+    }
+
+    // 2. Validate JSON body
+    let body: unknown;
 
     try {
       body = await request.json();
     } catch {
       return NextResponse.json(
         { error: 'Invalid JSON request body.' },
+        { status: 400 }
+      );
+    }
+
+    if (
+      typeof body !== 'object' ||
+      body === null ||
+      Array.isArray(body)
+    ) {
+      return NextResponse.json(
+        { error: 'Invalid request body.' },
         { status: 400 }
       );
     }
@@ -61,75 +101,74 @@ export async function POST(request: NextRequest) {
       major,
       current_semester,
       gpa,
-    } = body ?? {};
+    } = body as Record<string, unknown>;
 
-    // 2. Validate required fields and types
-    const requiredStrings = [
+    // 3. Validate required student fields
+    const requiredFields = [
       ['fullName', fullName],
       ['email', email],
       ['matriculation_number', matriculation_number],
       ['major', major],
     ] as const;
 
-    for (const [field, value] of requiredStrings) {
-      if (typeof value !== 'string' || !value.trim()) {
+    for (const [field, value] of requiredFields) {
+      if (
+        typeof value !== 'string' ||
+        !value.trim()
+      ) {
         return NextResponse.json(
-          { error: `${field} is required and must be a non-empty string.` },
+          { error: `${field} is required.` },
           { status: 400 }
         );
       }
     }
 
+    // 4. Normalize input
+    const normalizedName = (fullName as string).trim();
+    const normalizedEmail = (email as string).trim().toLowerCase();
+    const normalizedMatriculation =
+      (matriculation_number as string).trim();
+    const normalizedMajor = (major as string).trim();
+
+    // 5. Validate field lengths
     if (
-      current_semester === undefined ||
-      current_semester === null ||
-      current_semester === '' ||
-      gpa === undefined ||
-      gpa === null ||
-      gpa === ''
+      normalizedName.length < 2 ||
+      normalizedName.length > 100
     ) {
       return NextResponse.json(
-        { error: 'current_semester and gpa are required.' },
+        { error: 'Name must contain 2 to 100 characters.' },
         { status: 400 }
       );
     }
 
-    // 3. Normalize strings
-    const normalizedName = fullName.trim();
-    const normalizedEmail = email.trim().toLowerCase();
-    const normalizedMatriculation = matriculation_number.trim();
-    const normalizedMajor = major.trim();
-
-    // 4. Validate field lengths against known database columns
-    if (normalizedName.length > 100) {
-      return NextResponse.json(
-        { error: 'Name must not exceed 100 characters.' },
-        { status: 400 }
-      );
-    }
-
-    if (normalizedEmail.length > 120) {
+    if (
+      normalizedEmail.length > 120
+    ) {
       return NextResponse.json(
         { error: 'Email must not exceed 120 characters.' },
         { status: 400 }
       );
     }
 
-    if (normalizedMatriculation.length > 50) {
+    if (
+      normalizedMatriculation.length > 20
+    ) {
       return NextResponse.json(
-        { error: 'Matriculation number must not exceed 50 characters.' },
+        { error: 'Matriculation number must not exceed 20 characters.' },
         { status: 400 }
       );
     }
 
-    if (normalizedMajor.length > 200) {
+    if (
+      normalizedMajor.length > 100
+    ) {
       return NextResponse.json(
-        { error: 'Major must not exceed 200 characters.' },
+        { error: 'Major must not exceed 100 characters.' },
         { status: 400 }
       );
     }
 
-    // 5. Validate email format
+    // 6. Validate email
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
     if (!emailRegex.test(normalizedEmail)) {
@@ -139,31 +178,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 6. Validate name and text fields
-    if (normalizedName.length < 2) {
-      return NextResponse.json(
-        { error: 'Name must contain at least 2 characters.' },
-        { status: 400 }
-      );
-    }
-
-    if (normalizedMatriculation.length < 1) {
-      return NextResponse.json(
-        { error: 'Matriculation number is required.' },
-        { status: 400 }
-      );
-    }
-
     // 7. Validate semester and GPA
-    const semester = Number(current_semester);
-    const grade = Number(gpa);
+    const semester =
+      typeof current_semester === 'number' ||
+      (typeof current_semester === 'string' &&
+        current_semester.trim() !== '')
+        ? Number(current_semester)
+        : NaN;
 
-    if (!Number.isInteger(semester) || semester < 1) {
+    const grade =
+      typeof gpa === 'number' ||
+      (typeof gpa === 'string' && gpa.trim() !== '')
+        ? Number(gpa)
+        : NaN;
+
+    if (
+      !Number.isSafeInteger(semester) ||
+      semester < 1 ||
+      semester > 12
+    ) {
       return NextResponse.json(
-        {
-          error: 'Invalid current semester.',
-          details: 'Semester must be a positive integer.',
-        },
+        { error: 'Semester must be an integer between 1 and 12.' },
         { status: 400 }
       );
     }
@@ -171,138 +206,118 @@ export async function POST(request: NextRequest) {
     if (
       !Number.isFinite(grade) ||
       grade < 0 ||
-      grade > 4
+      grade > 4 ||
+      Math.round(grade * 100) !== grade * 100
     ) {
       return NextResponse.json(
-        {
-          error: 'Invalid GPA.',
-          details: 'GPA must be a number between 0 and 4.',
-        },
+        { error: 'GPA must be between 0 and 4 with at most 2 decimal places.' },
         { status: 400 }
       );
     }
 
-    if (Math.round(grade * 100) !== grade * 100) {
-      return NextResponse.json(
-        {
-          error: 'Invalid GPA precision.',
-          details: 'GPA can have at most 2 decimal places.',
-        },
-        { status: 400 }
-      );
-    }
-
-    // 8. Hash a generated temporary password
+    // 8. Generate a random temporary student password
     const temporaryPassword = randomUUID();
-    const passwordHash = await bcrypt.hash(temporaryPassword, 10);
 
-    // 9. Connect to database
-    pool = await new sql.ConnectionPool(config).connect();
+    const passwordHash = await bcrypt.hash(
+      temporaryPassword,
+      10
+    );
 
-    // 10. Check for duplicate email or matriculation number
-    const existingEmail = await pool.request()
-      .input('email', sql.VarChar(120), normalizedEmail)
-      .query(`
-        SELECT user_id
-        FROM dbo.academic_user
-        WHERE email = @email
-      `);
+    // 9. Connect to MariaDB
+    connection = await getConnection();
 
-    if (existingEmail.recordset.length > 0) {
+    // 10. Check duplicate email
+    const existingEmail = await connection.query(
+      `
+      SELECT user_id
+      FROM academic_user
+      WHERE email = ?
+      LIMIT 1
+      `,
+      [normalizedEmail]
+    );
+
+    if (existingEmail.length > 0) {
       return NextResponse.json(
-        {
-          error: 'Email already exists.',
-          details: 'Please use an email that is not registered.',
-        },
+        { error: 'Email already exists.' },
         { status: 409 }
       );
     }
 
-    const existingMatriculation = await pool.request()
-      .input(
-        'matriculationNumber',
-        sql.VarChar(50),
-        normalizedMatriculation
-      )
-      .query(`
-        SELECT student_id
-        FROM dbo.student
-        WHERE matriculation_number = @matriculationNumber
-      `);
+    // 11. Check duplicate matriculation number
+    const existingMatriculation = await connection.query(
+      `
+      SELECT student_id
+      FROM student
+      WHERE matriculation_number = ?
+      LIMIT 1
+      `,
+      [normalizedMatriculation]
+    );
 
-    if (existingMatriculation.recordset.length > 0) {
+    if (existingMatriculation.length > 0) {
       return NextResponse.json(
-        {
-          error: 'Matriculation number already exists.',
-          details: 'Please use a different matriculation number.',
-        },
+        { error: 'Matriculation number already exists.' },
         { status: 409 }
       );
     }
 
-    // 11. Insert both records atomically
-    transaction = new sql.Transaction(pool);
-    await transaction.begin();
+    // 12. Start transaction
+    await connection.beginTransaction();
+    transactionStarted = true;
 
-    const userResult = await new sql.Request(transaction)
-      .input('fullName', sql.VarChar(100), normalizedName)
-      .input('email', sql.VarChar(120), normalizedEmail)
-      .input('passwordHash', sql.VarChar(255), passwordHash)
-      .input('userRole', sql.VarChar(20), 'student')
-      .query(`
-        INSERT INTO dbo.academic_user (
-          full_name,
-          email,
-          password_hash,
-          user_role,
-          created_at,
-          is_active
-        )
-        OUTPUT INSERTED.user_id
-        VALUES (
-          @fullName,
-          @email,
-          @passwordHash,
-          @userRole,
-          GETDATE(),
-          1
-        );
-      `);
+    // 13. Insert academic user
+    const userResult = await connection.query(
+      `
+      INSERT INTO academic_user (
+        full_name,
+        email,
+        password_hash,
+        user_role,
+        created_at,
+        is_active
+      )
+      VALUES (?, ?, ?, ?, NOW(), ?)
+      `,
+      [
+        normalizedName,
+        normalizedEmail,
+        passwordHash,
+        'student',
+        1,
+      ]
+    );
 
-    const userId = userResult.recordset[0]?.user_id;
+    const userId = Number(userResult.insertId);
 
-    if (userId === undefined || userId === null) {
-      throw new Error('Could not retrieve the new user ID.');
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      throw new Error('Failed to create user record.');
     }
 
-    await new sql.Request(transaction)
-      .input('studentId', sql.Int, userId)
-      .input(
-        'matriculationNumber',
-        sql.VarChar(50),
-        normalizedMatriculation
+    // 14. Insert student record
+    await connection.query(
+      `
+      INSERT INTO student (
+        student_id,
+        matriculation_number,
+        major,
+        current_semester,
+        gpa
       )
-      .input('major', sql.VarChar(200), normalizedMajor)
-      .input('semester', sql.Int, semester)
-      .input('gpa', sql.Decimal(4, 2), grade)
-      .query(`
-        INSERT INTO dbo.student (
-          student_id,
-          matriculation_number,
-          major,
-          current_semester,
-          gpa
-        )
-        VALUES (
-          @studentId,
-          @matriculationNumber,
-          @major,
-          @semester,
-          @gpa
-        );
-      `);
+      VALUES (?, ?, ?, ?, ?)
+      `,
+      [
+        userId,
+        normalizedMatriculation,
+        normalizedMajor,
+        semester,
+        grade,
+      ]
+    );
 
-    await transaction.commit();
+    // 15. Commit transaction
+    await connection.commit();
+    transactionStarted = false;
 
     return NextResponse.json(
       {
@@ -313,32 +328,29 @@ export async function POST(request: NextRequest) {
       },
       { status: 201 }
     );
+
   } catch (error: unknown) {
-    if (transaction) {
+    if (connection && transactionStarted) {
       try {
-        await transaction.rollback();
+        await connection.rollback();
       } catch (rollbackError) {
-        console.error('Transaction rollback failed:', rollbackError);
+        console.error(
+          'STUDENT TRANSACTION ROLLBACK ERROR:',
+          rollbackError
+        );
       }
     }
 
     console.error('CREATE STUDENT ERROR:', error);
 
     return NextResponse.json(
-      {
-        error: 'Failed to create student.',
-        details:
-          error instanceof Error
-            ? error.message
-            : 'Unknown database error.',
-      },
+      { error: 'Failed to create student.' },
       { status: 500 }
     );
+
   } finally {
-    if (pool) {
-      await pool.close().catch((error) => {
-        console.error('Database pool close failed:', error);
-      });
+    if (connection) {
+      connection.release();
     }
   }
 }

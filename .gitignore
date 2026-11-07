@@ -4,3 +4,6 @@ my-app/.next/
 .env*
 my-app/.env*
 .vercel/
+
+.next/
+my-app/aimap_backup.sql
